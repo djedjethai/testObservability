@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
-	// logs "gitlab.com/grpasr/common/observability/logging"
+	logs "gitlab.com/grpasr/common/observability/logging"
 	"net/http"
 	"os"
 	// added
@@ -138,15 +138,10 @@ func add(ctx context.Context, x, y int64) int64 {
 		attribute.Int("age", 89),
 	)
 
-	// log := logs.NewZerolog(ctx)
-	// log.Info().Msg("add_called")
+	log := logs.NewZerolog(ctx)
+	log.Info().Msg("add_called")
 
 	return x + y
-	// log := NewLogrus(ctx).WithFields(logrus.Fields{
-	// 	"component": "addition",
-	// 	"age":       89,
-	// })
-	// log.Info("add_called")
 
 }
 

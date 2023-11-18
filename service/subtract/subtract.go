@@ -30,7 +30,7 @@ const (
 	id                    = 2
 )
 
-func main() {
+func Start() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -65,8 +65,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", subtractHandler)
 	handler := otelhttp.NewHandler(mux, "server.http")
-	server := &http.Server{Addr: "3002", Handler: handler}
-	log.Println("substract start, port 3002 ...")
+	server := &http.Server{Addr: ":4002", Handler: handler}
+	log.Println("substract start, port 4002 ...")
 	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}

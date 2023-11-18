@@ -1,4 +1,10 @@
 confs
 vendor
 
-web/node_modules
+service/api/vendor
+service/add/vendor
+service/subtract/vendor
+
+web/
+
+frontend/node_modules

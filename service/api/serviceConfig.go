@@ -1,4 +1,4 @@
-package apinotrace
+package api
 
 // import (
 // 	"log"
@@ -7,7 +7,7 @@ package apinotrace
 //
 // 	"gopkg.in/yaml.v2"
 // )
-
+//
 // type Config struct {
 // 	Services []struct {
 // 		Name string `yaml:"name"`
@@ -15,7 +15,7 @@ package apinotrace
 // 		Port int    `yaml:"port"`
 // 	} `yaml:"services"`
 // }
-
+//
 // func GetServices() Config {
 // 	wd, err := os.Getwd()
 // 	if err != nil {

@@ -45,6 +45,7 @@ const handleForm = () => {
 
 const calculate = (endpoint, payload) => {
   return new Promise(async (resolve, reject) => {
+	  console.log("grrr: ", endpoint)
     const req = new XMLHttpRequest();
     req.open('POST', endpoint, true);
     req.setRequestHeader('Content-Type', 'application/json');

@@ -15,19 +15,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+	// "time"
 
 	// "google.golang.org/grpc/codes"
 	"gopkg.in/yaml.v2"
-
 	// // added
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	// "go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel"
 	// "go.opentelemetry.io/otel/attribute"
 	// "go.opentelemetry.io/otel/metric"
 	// "go.opentelemetry.io/otel/metric/global"
 	// "go.opentelemetry.io/otel/metric/instrument"
-	// "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
@@ -41,7 +40,7 @@ const (
 
 var services Config
 
-func main() {
+func Start() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -77,15 +76,18 @@ func main() {
 	mux.HandleFunc("/", rootHandler)
 	mux.HandleFunc("/calculate", calcHandler)
 	services = GetServices()
-	handler := otelhttp.NewHandler(mux, "server.http")
-	server := &http.Server{Addr: "3000", Handler: handler}
-	log.Println("api start, port 3000 ...")
+	fmt.Println("see the services: ", services)
+	handler := otelhttp.NewHandler(mux, "api-server")
+	server := &http.Server{Addr: ":4000", Handler: handler}
+	log.Println("api start, port 4000 ...")
 	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}
 }
 
 func rootHandler(w http.ResponseWriter, req *http.Request) {
+
+	fmt.Println("hittttt the api /...................")
 	fmt.Fprintf(w, "%v", services)
 }
 
@@ -102,12 +104,20 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// get a span and its context
+	ctx, span := otel.Tracer("go.opentelemetry.io").Start(req.Context(), "calcHandler_HttpHandler")
+	defer span.End()
+
 	// calcRequest, err := ParseCalcRequest(req.Body, span)
-	calcRequest, err := ParseCalcRequest(req.Body)
+	// TODO see but that should terminate the current span
+	calcRequest, err := ParseCalcRequest(req.Body, span)
 	if err != nil {
+		fmt.Println("errr parse request: ", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	fmt.Println("hittttt the api /calculate...................: ", calcRequest)
 
 	var url string
 
@@ -122,8 +132,10 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "could not find requested calculation method", http.StatusBadRequest)
 	}
 
-	client := http.DefaultClient
-	request, _ := http.NewRequest("GET", url, nil)
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+	request, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 
 	res, err := client.Do(request)
 	if err != nil {
@@ -143,6 +155,7 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	fmt.Println("In api see response before sending: ", resp)
 	fmt.Fprintf(w, "%d", resp)
 }
 
@@ -152,21 +165,22 @@ type CalcRequest struct {
 }
 
 // func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
-func ParseCalcRequest(body io.Reader) (CalcRequest, error) {
+func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
 	var parsedRequest CalcRequest
 
-	// // Add event: attempting to parse body
-	// span.AddEvent("attempting to parse body")
-	// span.AddEvent(fmt.Sprintf("%s", body))
+	// Add event: attempting to parse body
+	span.AddEvent("attempting to parse body")
+	span.AddEvent(fmt.Sprintf("%s", body))
 	err := json.NewDecoder(body).Decode(&parsedRequest)
 	if err != nil {
 		// span.SetStatus(codes.InvalidArgument)
-		span.SetStatus(codes.Error, "the description")
+		// 500 is the http.Code
+		span.SetStatus(500, "the description")
 		span.AddEvent(err.Error())
 		span.End()
 		return parsedRequest, err
 	}
-	// span.End()
+	span.End()
 
 	return parsedRequest, nil
 }

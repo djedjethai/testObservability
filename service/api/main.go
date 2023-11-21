@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
+	tracing "gitlab.com/grpasr/common/observability/tracing/http"
 	"io"
 	"io/ioutil"
 	"log"
@@ -22,7 +23,7 @@ import (
 	// // added
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
-	// "go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/attribute"
 	// "go.opentelemetry.io/otel/metric"
 	// "go.opentelemetry.io/otel/metric/global"
 	// "go.opentelemetry.io/otel/metric/instrument"
@@ -72,9 +73,14 @@ func Start() {
 	// 	}
 	// }(ctx)
 
+	// NOTE add tracingMiddleware to the handlers
+	tr := otel.Tracer("go.opentelemetry.io")
+	rootHandlerWithMiddleware := tracing.TracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
+	calcHandlerWithMiddleware := tracing.TracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", rootHandler)
-	mux.HandleFunc("/calculate", calcHandler)
+	mux.HandleFunc("/", rootHandlerWithMiddleware)
+	mux.HandleFunc("/calculate", calcHandlerWithMiddleware)
 	services = GetServices()
 	fmt.Println("see the services: ", services)
 	handler := otelhttp.NewHandler(mux, "api-server")
@@ -109,7 +115,6 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 	defer span.End()
 
 	// calcRequest, err := ParseCalcRequest(req.Body, span)
-	// TODO see but that should terminate the current span
 	calcRequest, err := ParseCalcRequest(req.Body, span)
 	if err != nil {
 		fmt.Println("errr parse request: ", err)
@@ -169,7 +174,7 @@ func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
 	var parsedRequest CalcRequest
 
 	// Add event: attempting to parse body
-	span.AddEvent("attempting to parse body")
+	span.AddEvent("Attempting to parse body", trace.WithAttributes(attribute.String("event_key", "event_value")))
 	span.AddEvent(fmt.Sprintf("%s", body))
 	err := json.NewDecoder(body).Decode(&parsedRequest)
 	if err != nil {
@@ -180,7 +185,9 @@ func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
 		span.End()
 		return parsedRequest, err
 	}
-	span.End()
+	// NOTE this would have cut the span recording at this point.
+	// removing it let the caller func close it and get this added events
+	// span.End()
 
 	return parsedRequest, nil
 }

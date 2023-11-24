@@ -7,6 +7,7 @@ import (
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
 	logs "gitlab.com/grpasr/common/observability/logging"
+	// tracer "gitlab.com/grpasr/common/observability/tracing/http"
 	"log"
 	"net/http"
 	"os"
@@ -32,6 +33,10 @@ const (
 
 func Start() {
 
+	obs.SetObservabilityFacade()
+	// set the traceRecorder as Verbose
+	// obs.Tracing.VerboseActivate()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -41,13 +46,13 @@ func Start() {
 	}
 
 	{
-		tp, err := obs.SetupTracing(ctx, serviceName, tls)
+		tp, err := obs.Tracing.SetupTracing(ctx, serviceName, tls)
 		if err != nil {
 			panic(err)
 		}
 		defer tp.Shutdown(ctx)
 
-		mp, err := obs.SetupMetrics(ctx, serviceName, tls)
+		mp, err := obs.Metrics.SetupMetrics(ctx, serviceName, tls)
 		if err != nil {
 			panic(err)
 		}
@@ -97,6 +102,10 @@ func addRunner(ctx context.Context, values []string) (res int, err error) {
 		trace.WithAttributes(attribute.String("someKey", "someValue")),
 	)
 	defer span.End()
+
+	// vs := obs.Tracing.NewVerboseSpan()
+	ctx = obs.Tracing.VerboseSpanListen(ctx)
+	defer obs.Tracing.VerboseSpanEnd()
 
 	for _, n := range values {
 		i, errE := strconv.Atoi(n)

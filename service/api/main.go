@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
-	tracing "gitlab.com/grpasr/common/observability/tracing/http"
+	// tracing "gitlab.com/grpasr/common/observability/tracing/"
 	"io"
 	"io/ioutil"
 	"log"
@@ -43,6 +43,8 @@ var services Config
 
 func Start() {
 
+	obs.SetObservabilityFacade()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -52,13 +54,13 @@ func Start() {
 	}
 
 	{
-		tp, err := obs.SetupTracing(ctx, serviceName, tls)
+		tp, err := obs.Tracing.SetupTracing(ctx, serviceName, tls)
 		if err != nil {
 			panic(err)
 		}
 		defer tp.Shutdown(ctx)
 
-		mp, err := obs.SetupMetrics(ctx, serviceName, tls)
+		mp, err := obs.Metrics.SetupMetrics(ctx, serviceName, tls)
 		if err != nil {
 			panic(err)
 		}
@@ -75,8 +77,8 @@ func Start() {
 
 	// NOTE add tracingMiddleware to the handlers
 	tr := otel.Tracer("go.opentelemetry.io")
-	rootHandlerWithMiddleware := tracing.TracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
-	calcHandlerWithMiddleware := tracing.TracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
+	rootHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
+	calcHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", rootHandlerWithMiddleware)

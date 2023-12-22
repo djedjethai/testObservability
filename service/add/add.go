@@ -6,34 +6,34 @@ import (
 	"crypto/x509"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
-	logs "gitlab.com/grpasr/common/observability/logging"
-	// tracer "gitlab.com/grpasr/common/observability/tracing/http"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	// "go.opentelemetry.io/otel/metric"
+	// "go.opentelemetry.io/otel/metric/global"
+	// "go.opentelemetry.io/otel/metric/instrument"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	// "time"
-	// // added
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/global"
-	"go.opentelemetry.io/otel/metric/instrument"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	jaegerEndpoint string = "http://127.0.0.1:14268/api/traces"
-	serviceName    string = "add"
-	environment    string = "development"
-	id                    = 1
+	jaegerEndpoint    string  = "http://127.0.0.1:14268/api/traces"
+	serviceName       string  = "add"
+	environment       string  = "development"
+	id                        = 1
+	collectorEndpoint         = "localhost:4317"
+	samplingRation    float64 = 0.6
+	scratchDelay      int     = 30
 )
 
 func Start() {
 
-	obs.SetObservabilityFacade()
+	obs.SetObservabilityFacade(serviceName)
+
+	// set the logger to dev
+	obs.Logging.SetLoggingEnvToDevelopment()
+
 	// set the traceRecorder as Verbose
 	// obs.Tracing.VerboseActivate()
 
@@ -46,13 +46,25 @@ func Start() {
 	}
 
 	{
-		tp, err := obs.Tracing.SetupTracing(ctx, serviceName, tls)
+		tp, err := obs.Tracing.SetupTracing(
+			ctx,
+			tls,
+			samplingRation,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
 		defer tp.Shutdown(ctx)
 
-		mp, err := obs.Metrics.SetupMetrics(ctx, serviceName, tls)
+		mp, err := obs.Metrics.SetupMetrics(
+			ctx,
+			tls,
+			scratchDelay,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
@@ -78,7 +90,8 @@ func Start() {
 }
 
 func addHandler(w http.ResponseWriter, req *http.Request) {
-	ctx, span := otel.Tracer("go.opentelemetry.io").Start(req.Context(), "add-server_addHandler")
+	ctx, span := obs.Tracing.SPNGetFromCTX(req.Context(), "add-server_addHandler")
+	// ctx, span := otel.Tracer("go.opentelemetry.io").Start(req.Context(), "add-server_addHandler")
 	defer span.End()
 
 	values := strings.Split(req.URL.Query()["o"][0], ",")
@@ -94,13 +107,20 @@ func addHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func addRunner(ctx context.Context, values []string) (res int, err error) {
-	ctx, span := otel.Tracer("go.opentelemetry.io").Start(
+	ctx, span := obs.Tracing.SPNGetFromCTX(
 		ctx,
 		"add-server_addRunner",
-		// add labels/tags/resources(if any) that are specific to this scope.
-		trace.WithAttributes(attribute.String("component", "addition")),
-		trace.WithAttributes(attribute.String("someKey", "someValue")),
+		obs.Tracing.TAString("component", "addition"),
+		obs.Tracing.TAString("somekey", "somevalue"),
 	)
+
+	// ctx, span := otel.Tracer("go.opentelemetry.io").Start(
+	// 	ctx,
+	// 	"add-server_addRunner",
+	// 	// add labels/tags/resources(if any) that are specific to this scope.
+	// 	trace.WithAttributes(attribute.String("component", "addition")),
+	// 	trace.WithAttributes(attribute.String("someKey", "someValue")),
+	// )
 	defer span.End()
 
 	// vs := obs.Tracing.NewVerboseSpan()
@@ -118,29 +138,45 @@ func addRunner(ctx context.Context, values []string) (res int, err error) {
 	}
 
 	// setted on the same span as is trace.WithAttributes(attribute.String(...))
-	span.SetAttributes(attribute.Int("add-res", res))
+	obs.Tracing.SPNSetAttributes(
+		span,
+		obs.Tracing.TAInt("add-res", res))
+	// span.SetAttributes(attribute.Int("add-res", res))
 
-	counter, _ := global.MeterProvider().
-		Meter(
-			"go.opentelemetry.io",
-			metric.WithInstrumentationVersion("0.0.1"),
-		).Int64Counter(
+	counter, _ := obs.Metrics.NewMeterHandler().MTHInt64Counter(
 		"add_counter",
-		instrument.WithDescription("how many times add function has been called."),
-	)
+		obs.Metrics.ISOWithDescription("how many times add function has been called"))
 
-	counter.Add(
+	obs.Metrics.ISOAdd(
 		ctx,
+		counter,
 		1,
-		// labels/tag
-		attribute.String("component", "addition"),
-		attribute.Int("add-res", res),
+		obs.Tracing.TAString("component", "addition"),
+		obs.Tracing.TAInt("add-res", res),
 	)
 
-	log := logs.NewZerolog(ctx)
-	log.Info().Msg("add_called")
+	// counter, _ := global.MeterProvider().
+	// 	Meter(
+	// 		"go.opentelemetry.io",
+	// 		metric.WithInstrumentationVersion("0.0.1"),
+	// 	).Int64Counter(
+	// 	"add_counter",
+	// 	instrument.WithDescription("how many times add function has been called."),
+	// )
 
-	// return res
+	// counter.Add(
+	// 	ctx,
+	// 	1,
+	// 	// labels/tag
+	// 	obs.Tracing.TAString("component", "addition"),
+	// 	obs.Tracing.TAInt("add-res", res),
+	// 	// attribute.String("component", "addition"),
+	// 	// attribute.Int("add-res", res),
+	// )
+
+	log := obs.Logging.NewLogHandler(obs.Logging.LLHDebug(), ctx)
+	log.Msg("add_called_with_new_implementation44")
+
 	return
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
+	// "gitlab.com/grpasr/common/observability/tracing"
 	// tracing "gitlab.com/grpasr/common/observability/tracing/"
 	"io"
 	"io/ioutil"
@@ -16,27 +17,24 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	// "time"
 
 	// "google.golang.org/grpc/codes"
 	"gopkg.in/yaml.v2"
 	// // added
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	// "go.opentelemetry.io/otel/metric"
-	// "go.opentelemetry.io/otel/metric/global"
-	// "go.opentelemetry.io/otel/metric/instrument"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
 
 const (
-	jaegerEndpoint string = "http://127.0.0.1:14268/api/traces"
-	serviceName    string = "api"
-	environment    string = "development"
-	id                    = 0
+	jaegerEndpoint    string  = "http://127.0.0.1:14268/api/traces"
+	serviceName       string  = "api"
+	environment       string  = "development"
+	id                        = 0
+	collectorEndpoint         = "localhost:4317"
+	samplingRation    float64 = 0.6
+	scratchDelay      int     = 30
 )
 
 var services Config
@@ -54,13 +52,25 @@ func Start() {
 	}
 
 	{
-		tp, err := obs.Tracing.SetupTracing(ctx, serviceName, tls)
+		tp, err := obs.Tracing.SetupTracing(
+			ctx,
+			tls,
+			samplingRation,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
 		defer tp.Shutdown(ctx)
 
-		mp, err := obs.Metrics.SetupMetrics(ctx, serviceName, tls)
+		mp, err := obs.Metrics.SetupMetrics(
+			ctx,
+			tls,
+			scratchDelay,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
@@ -76,7 +86,8 @@ func Start() {
 	// }(ctx)
 
 	// NOTE add tracingMiddleware to the handlers
-	tr := otel.Tracer("go.opentelemetry.io")
+	tr := obs.Tracing.TRCGetTracer()
+	// tr := otel.Tracer("go.opentelemetry.io")
 	rootHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
 	calcHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
 
@@ -113,7 +124,9 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// get a span and its context
-	ctx, span := otel.Tracer("go.opentelemetry.io").Start(req.Context(), "calcHandler_HttpHandler")
+	// NOTE
+	ctx, span := obs.Tracing.SPNGetFromCTX(req.Context(), "calcHandler_HttpHandler")
+	// ctx, span := otel.Tracer("go.opentelemetry.io").Start(req.Context(), "calcHandler_HttpHandler")
 	defer span.End()
 
 	// calcRequest, err := ParseCalcRequest(req.Body, span)
@@ -176,14 +189,22 @@ func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
 	var parsedRequest CalcRequest
 
 	// Add event: attempting to parse body
-	span.AddEvent("Attempting to parse body", trace.WithAttributes(attribute.String("event_key", "event_value")))
+	// NOTE
+	obs.Tracing.SPNAddEvent(
+		span,
+		"Attempting to parse body",
+		obs.Tracing.TAString("event_key", "event_value"))
+	// span.AddEvent("Attempting to parse body", trace.WithAttributes(attribute.String("event_key", "event_value")))
 	span.AddEvent(fmt.Sprintf("%s", body))
 	err := json.NewDecoder(body).Decode(&parsedRequest)
 	if err != nil {
 		// span.SetStatus(codes.InvalidArgument)
 		// 500 is the http.Code
-		span.SetStatus(500, "the description")
-		span.AddEvent(err.Error())
+		// NOTE
+		obs.Tracing.SPNSetStatus(span, 500, "the description")
+		// span.SetStatus(500, "the description")
+		obs.Tracing.SPNAddEvent(span, err.Error())
+		// span.AddEvent(err.Error())
 		span.End()
 		return parsedRequest, err
 	}

@@ -6,31 +6,30 @@ import (
 	"crypto/x509"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"strconv"
-	"strings"
-	// "time"
-	// logs "gitlab.com/grpasr/common/observability/logging"
-	// // added
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	// "go.opentelemetry.io/otel"
-	// "go.opentelemetry.io/otel/attribute"
-	// "go.opentelemetry.io/otel/metric"
-	// "go.opentelemetry.io/otel/metric/global"
-	// "go.opentelemetry.io/otel/metric/instrument"
-	// "go.opentelemetry.io/otel/trace"
+	pb "testobservability/service/proto/v1/operand"
 )
 
 const (
-	jaegerEndpoint string = "http://127.0.0.1:14268/api/traces"
-	serviceName    string = "substract"
-	environment    string = "development"
-	id                    = 2
+	jaegerEndpoint    string  = "http://127.0.0.1:14268/api/traces"
+	serviceName       string  = "substract"
+	environment       string  = "development"
+	id                        = 2
+	collectorEndpoint         = "localhost:4317"
+	samplingRatio     float64 = 0.6
+	scratchDelay      int     = 30
 )
 
 func Start() {
+
+	obs.SetObservabilityFacade(serviceName)
+
+	obs.Logging.SetLoggingEnvToDevelopment()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -41,13 +40,25 @@ func Start() {
 	}
 
 	{
-		tp, err := obs.SetupTracing(ctx, serviceName, tls)
+		tp, err := obs.Tracing.SetupTracing(
+			ctx,
+			tls,
+			samplingRatio,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
 		defer tp.Shutdown(ctx)
 
-		mp, err := obs.SetupMetrics(ctx, serviceName, tls)
+		mp, err := obs.Metrics.SetupMetrics(
+			ctx,
+			tls,
+			scratchDelay,
+			serviceName,
+			collectorEndpoint,
+			environment)
 		if err != nil {
 			panic(err)
 		}
@@ -62,33 +73,109 @@ func Start() {
 	// 	}
 	// }(ctx)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", subtractHandler)
-	handler := otelhttp.NewHandler(mux, "server.http")
-	server := &http.Server{Addr: ":4002", Handler: handler}
-	log.Println("substract start, port 4002 ...")
-	if err := server.ListenAndServe(); err != nil {
-		panic(err)
+	// set the interceptor
+	serverOptions := []grpc.ServerOption{
+		grpc.UnaryInterceptor(traceInterceptor),
 	}
 
-	// err = http.ListenAndServe(":3002", mux)
-	// if err != nil {
-	// 	log.Fatalf("Could not initialize server: %s", err)
-	// }
+	osvc, err := NewOperandServer(serverOptions...)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var grpcPort = ":50001"
+	lis, err := net.Listen("tcp", grpcPort)
+	if err != nil {
+		log.Fatal("err creating the listener: ", err)
+	}
+
+	log.Println("GRPC Server is listening on port: ", grpcPort)
+	err = osvc.Serve(lis)
+	if err != nil {
+		log.Println("err server listen: ", err)
+	}
 }
 
-func subtractHandler(w http.ResponseWriter, req *http.Request) {
-	values := strings.Split(req.URL.Query()["o"][0], ",")
-	var res int
-	for _, n := range values {
-		i, err := strconv.Atoi(n)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		res -= i
+type OperandServer struct {
+	pb.UnimplementedOperandManagementServer
+}
+
+// func NewOperandServer(opt ...grpc.ServerOption) (*grpc.Server, error) {
+func NewOperandServer(opt ...grpc.ServerOption) (*grpc.Server, error) {
+	// gsrv := grpc.NewServer(opt...)
+	gsrv := grpc.NewServer(opt...)
+
+	osrv := &OperandServer{}
+
+	pb.RegisterOperandManagementServer(gsrv, osrv)
+
+	return gsrv, nil
+}
+
+var res = float32(0)
+
+func (o *OperandServer) SendOperand(ctx context.Context, dt *pb.Data) (*wrapperspb.StringValue, error) {
+	// Access the operand using request.Operand
+	operandValue := dt.Operand
+
+	ctx, span := obs.Tracing.SPNGetFromCTX(
+		ctx,
+		"subtract-server_SendOperand",
+		obs.Tracing.TAString("component", "subtraction"),
+		obs.Tracing.TAString("somekey", "somevalue"),
+	)
+	defer span.End()
+
+	for _, n := range operandValue {
+		// fmt.Println("see res0: ", res)
+		// if i == 0 {
+		// 	fmt.Println("see n: ", n)
+		// 	res += n
+		// }
+		// fmt.Println("see n2: ", n)
+		// fmt.Println("see res: ", res)
+		res -= n
 	}
-	fmt.Fprintf(w, "%d", res)
+
+	// setted on the same span as is trace.WithAttributes(attribute.String(...))
+	obs.Tracing.SPNSetAttributes(
+		span,
+		obs.Tracing.TAFloat64("subtract-res", float64(res)))
+
+	strValue := strconv.FormatFloat(float64(res), 'f', -1, 32)
+
+	return &wrapperspb.StringValue{Value: strValue}, nil
+
+}
+
+// grpc jaegger staff --------------------------------
+func traceInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+	// from client to server
+
+	method := info.FullMethod
+	log.Println("Received gRPC request for method:", method)
+
+	gh := obs.Tracing.NewGrpcTracingHandler()
+	// Extract the span context from the gRPC metadata
+	ok := gh.MetadataExtractor(ctx)
+	// md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		// propagator := propagation.TraceContext{}
+		ctx, _ = gh.ContextExtractor(ctx)
+		// ctx = propagator.Extract(ctx, metadataCarrier(md))
+		// ctx = propagator.Extract(ctx, propagation.NewCarrier(md))
+	}
+
+	// Call the gRPC handler with the modified context
+	resp, err = handler(ctx, req)
+
+	// response to the client
+
+	// // Invoke the gRPC method
+	// ctxSp := trace.ContextWithSpan(ctx, span)
+	// ctx = metadata.NewOutgoingContext(ctxSp, md)
+
+	return resp, err
 }
 
 // getTls returns a configuration that enables the use of mutual TLS.

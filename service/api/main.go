@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	obs "gitlab.com/grpasr/common/observability"
-	// "gitlab.com/grpasr/common/observability/tracing"
-	// tracing "gitlab.com/grpasr/common/observability/tracing/"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,12 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	// "google.golang.org/grpc/codes"
-	"gopkg.in/yaml.v2"
-	// // added
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/trace"
+	pb "testobservability/service/proto/v1/operand"
 )
 
 // go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
@@ -33,8 +31,9 @@ const (
 	environment       string  = "development"
 	id                        = 0
 	collectorEndpoint         = "localhost:4317"
-	samplingRation    float64 = 0.6
+	samplingRatio     float64 = 0.6
 	scratchDelay      int     = 30
+	grpcPort          string  = "50001"
 )
 
 var services Config
@@ -55,7 +54,7 @@ func Start() {
 		tp, err := obs.Tracing.SetupTracing(
 			ctx,
 			tls,
-			samplingRation,
+			samplingRatio,
 			serviceName,
 			collectorEndpoint,
 			environment)
@@ -143,8 +142,28 @@ func calcHandler(w http.ResponseWriter, req *http.Request) {
 
 	for _, n := range services.Services {
 		if strings.ToLower(calcRequest.Method) == strings.ToLower(n.Name) {
-			j, _ := json.Marshal(calcRequest.Operands)
-			url = fmt.Sprintf("http://%s:%d/%s?o=%s", n.Host, n.Port, strings.ToLower(n.Name), strings.Trim(string(j), "[]"))
+			// NOTE case subtract, grpc
+			if strings.ToLower(calcRequest.Method) == "subtract" {
+
+				svc, err := NewOperandGrpc(grpcPort)
+
+				opr := &pb.Data{}
+				opr.Operand = []float32{float32(calcRequest.Operands[0]), float32(calcRequest.Operands[1])}
+
+				// pass the context which contain the span
+				resp, err := svc.GetClient().SendOperand(ctx, opr)
+				if err != nil {
+					fmt.Println("see the err: ", err)
+				}
+
+				fmt.Println("see the resp: ", resp)
+				fmt.Fprintf(w, "%s", resp.Value)
+				return
+
+			} else {
+				j, _ := json.Marshal(calcRequest.Operands)
+				url = fmt.Sprintf("http://%s:%d/%s?o=%s", n.Host, n.Port, strings.ToLower(n.Name), strings.Trim(string(j), "[]"))
+			}
 		}
 	}
 
@@ -213,6 +232,76 @@ func ParseCalcRequest(body io.Reader, span trace.Span) (CalcRequest, error) {
 	// span.End()
 
 	return parsedRequest, nil
+}
+
+type OperandGrpc struct {
+	grpcPort string
+	client   pb.OperandManagementClient
+}
+
+func NewOperandGrpc(port string) (*OperandGrpc, error) {
+	og := &OperandGrpc{
+		grpcPort: port,
+	}
+	err := og.operandSetClient()
+	return og, err
+}
+
+func (o *OperandGrpc) operandSetClient() error {
+	ctx := context.Background()
+
+	// register the interceptor
+	traceDialOption := grpc.WithUnaryInterceptor(traceInterceptor)
+
+	conn, err := grpc.DialContext(
+		ctx,
+		fmt.Sprintf("127.0.0.1:%v", o.grpcPort),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		traceDialOption,
+	)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("grpc order client is ready")
+	client := pb.NewOperandManagementClient(conn)
+	o.client = client
+	return nil
+}
+
+func (o *OperandGrpc) GetClient() pb.OperandManagementClient {
+	return o.client
+}
+
+func traceInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	// tracer := otel.Tracer(method)
+	// _, span := tracer.Start(ctx, method)
+	_, span := obs.Tracing.SPNGetFromCTX(ctx, method)
+	defer span.End()
+
+	// You can add attributes to the span if needed
+	// span.SetAttributes(attribute.String("grpc.method", method))
+	obs.Tracing.SPNSetAttributes(
+		span,
+		obs.Tracing.TAString("grpc.method", method))
+
+	gh := obs.Tracing.NewGrpcTracingHandler()
+	// propagator := propagation.TraceContext{}
+
+	// same goMicro
+	gh.GenerateMetadata()
+	// md := metadata.MD{}
+
+	_ = gh.MetadataInjector(ctx)
+	// propagator.Inject(ctx, metadataCarrier(md))
+
+	// Invoke the gRPC method
+	ctx, _ = gh.OutgoingContext(ctx)
+	// ctx = metadata.NewOutgoingContext(ctx, md)
+
+	err := invoker(ctx, method, req, reply, cc, opts...)
+
+	return err
 }
 
 type Config struct {

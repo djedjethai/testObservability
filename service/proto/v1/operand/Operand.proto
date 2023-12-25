@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+
+package v1_operandl;
+
+option go_package = "./proto/v1/operand";
+
+service OperandManagement {
+	rpc SendOperand(Data) returns (google.protobuf.StringValue);
+}
+
+message Data{
+	repeated float Operand = 1; 
+}

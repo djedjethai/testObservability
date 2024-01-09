@@ -27,6 +27,10 @@ const Home =  ({pics}) => {
 		const headers = {};
 		propagation.inject(context.active(), headers);
 
+		// NOTE that can work only with http as browser do not handle grpc req....
+		// one solution is to implement a http trace provider which hit the brocker
+		// then the broker proxy the span to the collector with grpc
+		// a second solution is to set the collector to collect http req as well
 		await trace
 			.getTracer("nextJs example")
 			.startActiveSpan('calculate', async(span) => {
@@ -45,6 +49,7 @@ const Home =  ({pics}) => {
   					console.log('Response data:', responseData);
 				} catch(e) {
 					console.log(e)
+					span.end()
 				} finally {
 					span.end()
 				}

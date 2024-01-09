@@ -4,13 +4,21 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "start:server": "node tracing.js",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.9.13",
+    "@opentelemetry/api": "^1.7.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.46.0",
+    "@opentelemetry/resources": "^1.19.0",
+    "@opentelemetry/sdk-node": "^0.46.0",
+    "@opentelemetry/sdk-trace-node": "^1.19.0",
+    "@opentelemetry/semantic-conventions": "^1.19.0",
+    "next": "14.0.2",
     "react": "^18",
-    "react-dom": "^18",
-    "next": "14.0.2"
+    "react-dom": "^18"
   }
 }

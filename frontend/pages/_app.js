@@ -6,6 +6,9 @@ import Header from '../components/header'
 // import buildClient from '../services/build-client'
 // import { authRoutes } from '../services/config'
 
+import { register } from '../instrumentation';
+import { trace, context, propagation } from '@opentelemetry/api';
+
 const AppComponent = ({ Component, pageProps, currentUser }) => {
 
 	return (
@@ -23,70 +26,51 @@ export default AppComponent
 
 AppComponent.getInitialProps = async (appContext) => {
 
-	// const client = buildClient(appContext.ctx)
- 	
+	// test OpenTelemetry from the server side
+
+	// NOTE is the headers are really needed ??
+	const headers = {};
+	propagation.inject(context.active(), headers);
+
+	await trace
+		.getTracer("nextJs example")
+		.startActiveSpan('calculate', async(span) => {
+			try{
+				const response = await fetch('http://127.0.0.1:4000/', {
+        				method: 'GET',
+        				headers: {
+        					'Content-Type': 'application/json',
+						...headers, // Add the injected headers
+        				},
+      				});
+
+				const data = await response.text();
+    				console.log('Raw response:', data);
+
+				// console.log("See the response: ", response)
+				// const responseData = await response.json();
+  				// console.log('Response data:', responseData);
+			} catch(e) {
+				console.log(e)
+				span.end()
+			} finally {
+				console.log("span end........... ")
+				span.end()
+			}
+		})
+
 	let currentUser = {}
 	let pageProps = {}
 
 	if(appContext.Component.getInitialProps){
-         	// pageProps = await appContext.Component.getInitialProps(appContext.ctx, client, currentUser)
-         	pageProps = await appContext.Component.getInitialProps(appContext.ctx, currentUser)
+        	 // pageProps = await appContext.Component.getInitialProps(appContext.ctx, client, currentUser)
+        	 pageProps = await appContext.Component.getInitialProps(appContext.ctx, currentUser)
         }
 
 	return {
-                 pageProps,
+        	pageProps,
 		currentUser,
 		// ...currentUser
         }
-
-
-
-	// // get the datas of the token and return it within the token
-	// // NOTE that normaly should be done at the gateway level
-	// // but I thing the gateway can valideta the jwt but not returning the data...
-	// try {
-
-	// 	// let { data } = await client.get('/api/v1/auth/jwtgetdata') 
-	// 	let { data } = await client.get(authRoutes.jwtgetdata) 
-	// 	// say that needed for cookie to be passed in but get block with cors
-	// 	// let { data } = await client.get('/api/v1/auth/jwtgetdata', { 
-	// 	// 	withCredentials: true, 
-	// 	// })
-
-	// 	currentUser = data
-
-	// console.log("at _app seee the datas: ", currentUser)
-
-	// } catch(e){
-	// 	if (e.response.status === 400) {
-	// 	 	// no jwtoken
-	// 	 	console.log("/api/v1/auth/jwtgetdata err === 400: ", e.response.status)
-	// 	} else if(e.response.status === 401) {
-	// 		console.log("see errrrr from jwtgetdata: ", e.response.status)
-	// 		console.log("see errrrr from jwtgetdata: ", e.response.data)
-	// 		// invalid/expired jwtoken target endpoint to refresh
-	// 		try{
-	// 			// let { data } = await client.get('/api/v1/auth/refreshopenid')
-	// 			let { data } = await client.get(authRoutes.refreshopenid)
-	// 			console.log("seee the data: ", data)
-	// 			
-	// 			// document.cookie = `jwt_token=${JSON.stringify(data)}`;
-	// 			currentUser = data
-
-	// 		} catch(e){
-	// 			console.log("e error after refeshingToken: ", e)
-	// 			// TODO remove token from cookie, not allow
-	// 			// throw e // put that all section into a try then throw
-	// 		}
-	// 		
-	// 	} else if(e.response.status === 403) {
-	// 		console.log("Innn 403 no pbbbbbbbbbbb")
-	// 		// any other error
-	// 		// TODO remove token from cookie, not allow
-	// 	} else {
-	// 	//
-	// 		console.log("In _app in else.....: ", e)
-	// 	}
-	// }
 }
 

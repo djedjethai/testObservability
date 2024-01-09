@@ -87,8 +87,8 @@ func Start() {
 	// NOTE add tracingMiddleware to the handlers
 	tr := obs.Tracing.TRCGetTracer()
 	// tr := otel.Tracer("go.opentelemetry.io")
-	rootHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
-	calcHandlerWithMiddleware := obs.Tracing.TracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
+	rootHandlerWithMiddleware := obs.Tracing.HTTPTracingMiddleware(tr, rootHandler, "rootHandler_http_req_res")
+	calcHandlerWithMiddleware := obs.Tracing.HTTPTracingMiddleware(tr, calcHandler, "calcHandler_http_req_res")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", rootHandlerWithMiddleware)
@@ -104,6 +104,10 @@ func Start() {
 }
 
 func rootHandler(w http.ResponseWriter, req *http.Request) {
+	enableCors(&w, req)
+	if (*req).Method == "OPTIONS" {
+		return
+	}
 
 	fmt.Println("hittttt the api /...................")
 	fmt.Fprintf(w, "%v", services)
